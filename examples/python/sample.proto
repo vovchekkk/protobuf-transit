@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package sample;
+
+option csharp_namespace = "Sample";
+
+message OrderSubmitted {
+  string order_id = 1;
+  string customer_id = 2;
+}

@@ -1,0 +1,175 @@
+name: Release to NuGet
+
+"on":
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: pbtransit_demo
+          POSTGRES_USER: demo
+          POSTGRES_PASSWORD: demo
+        ports:
+          - 55439:5432
+        options: >-
+          --health-cmd "pg_isready -U demo -d pbtransit_demo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: demo
+          RABBITMQ_DEFAULT_PASS: demo
+        ports:
+          - 56789:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve and validate version
+        id: version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$TAG_NAME" != v* ]]; then
+            echo "::error::Tag '$TAG_NAME' does not start with 'v'."
+            exit 1
+          fi
+          VERSION="${TAG_NAME#v}"
+          SEMVER_REGEX='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*)?(\+[0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*)?$'
+          if [[ ! "$VERSION" =~ $SEMVER_REGEX ]]; then
+            echo "::error::Version '$VERSION' extracted from tag '$TAG_NAME' is not a valid SemVer format."
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Preflight check NuGet registry
+        id: preflight
+        run: |
+          NORM_VERSION="${VERSION%%+*}"
+          VERSION_LOWER=$(echo "$NORM_VERSION" | tr '[:upper:]' '[:lower:]')
+          RESPONSE_FILE=$(mktemp)
+          set +e
+          HTTP_CODE=$(curl -s -S --connect-timeout 15 --max-time 30 --retry 3 --retry-delay 2 -o "$RESPONSE_FILE" -w "%{http_code}" "https://api.nuget.org/v3-flatcontainer/protobuftransit/index.json")
+          CURL_STATUS=$?
+          set -e
+          if [ "$CURL_STATUS" -ne 0 ]; then
+            echo "::error::Failed to query NuGet registry for package 'protobuftransit' (curl status $CURL_STATUS). Failing closed."
+            rm -f "$RESPONSE_FILE"
+            exit 1
+          fi
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "Package 'protobuftransit' does not exist yet on NuGet.org. Proceeding with publication."
+            echo "skip_publish=false" >> "$GITHUB_OUTPUT"
+            rm -f "$RESPONSE_FILE"
+          elif [ "$HTTP_CODE" = "200" ]; then
+            if ! jq -e 'has("versions") and (.versions | type == "array")' "$RESPONSE_FILE" >/dev/null 2>&1; then
+              echo "::error::Invalid or unexpected schema from NuGet flatcontainer API (missing .versions array or malformed JSON). Failing closed."
+              rm -f "$RESPONSE_FILE"
+              exit 1
+            fi
+            VERSION_FOUND=$(jq -r --arg v "$VERSION_LOWER" '.versions[] | select(ascii_downcase == $v)' "$RESPONSE_FILE")
+            rm -f "$RESPONSE_FILE"
+            if [ -n "$VERSION_FOUND" ]; then
+              echo "Version '$NORM_VERSION' already exists on NuGet.org. Skipping OIDC login and push."
+              echo "skip_publish=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "Version '$NORM_VERSION' not found on NuGet.org. Proceeding with publication."
+              echo "skip_publish=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "::error::Unexpected HTTP status $HTTP_CODE from NuGet flatcontainer API. Failing closed."
+            rm -f "$RESPONSE_FILE"
+            exit 1
+          fi
+
+      - name: Validate NuGet User Variable
+        if: steps.preflight.outputs.skip_publish != 'true'
+        env:
+          NUGET_USER: ${{ vars.NUGET_USER }}
+        run: |
+          if [ -z "$NUGET_USER" ]; then
+            echo "::error::Repository variable vars.NUGET_USER is not configured or empty. Please set it in Settings -> Secrets and variables -> Actions -> Variables."
+            exit 1
+          fi
+
+      - name: Restore dependencies
+        run: dotnet restore ProtobufTransit.sln
+
+      - name: Build
+        run: dotnet build ProtobufTransit.sln -c Release --no-restore -p:Version="$VERSION"
+
+      - name: Test
+        env:
+          PROTOBUFTRANSIT_INTEGRATION: "1"
+          POSTGRES_CONNECTION: "Host=127.0.0.1;Port=55439;Database=pbtransit_demo;Username=demo;Password=demo"
+          RABBITMQ_HOST: "127.0.0.1"
+          RABBITMQ_PORT: "56789"
+          RABBITMQ_USERNAME: "demo"
+          RABBITMQ_PASSWORD: "demo"
+        run: dotnet test ProtobufTransit.sln -c Release --no-build --verbosity normal
+
+      - name: Pack
+        run: dotnet pack src/ProtobufTransit/ProtobufTransit.csproj -c Release --no-build -o artifacts -p:Version="$VERSION"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/
+          if-no-files-found: error
+
+      - name: NuGet Login
+        if: steps.preflight.outputs.skip_publish != 'true'
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push to NuGet
+        if: steps.preflight.outputs.skip_publish != 'true'
+        env:
+          NUGET_TOKEN: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          shopt -s nullglob
+          PACKAGES=()
+          for pkg in artifacts/ProtobufTransit.*.nupkg; do
+            if [[ "$pkg" != *.symbols.nupkg ]]; then
+              PACKAGES+=("$pkg")
+            fi
+          done
+          if [ ${#PACKAGES[@]} -ne 1 ]; then
+            echo "::error::Expected exactly one main package in artifacts, found ${#PACKAGES[@]}: ${PACKAGES[*]}"
+            exit 1
+          fi
+          TARGET_PACKAGE="${PACKAGES[0]}"
+          dotnet nuget push "$TARGET_PACKAGE" --api-key "$NUGET_TOKEN" --source https://api.nuget.org/v3/index.json --skip-duplicate

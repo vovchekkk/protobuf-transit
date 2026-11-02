@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: pbtransit_demo
+          POSTGRES_USER: demo
+          POSTGRES_PASSWORD: demo
+        ports:
+          - 55439:5432
+        options: >-
+          --health-cmd "pg_isready -U demo -d pbtransit_demo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: demo
+          RABBITMQ_DEFAULT_PASS: demo
+        ports:
+          - 56789:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore ProtobufTransit.sln
+
+      - name: Build
+        run: dotnet build ProtobufTransit.sln -c Release --no-restore
+
+      - name: Test
+        env:
+          PROTOBUFTRANSIT_INTEGRATION: "1"
+          POSTGRES_CONNECTION: "Host=127.0.0.1;Port=55439;Database=pbtransit_demo;Username=demo;Password=demo"
+          RABBITMQ_HOST: "127.0.0.1"
+          RABBITMQ_PORT: "56789"
+          RABBITMQ_USERNAME: "demo"
+          RABBITMQ_PASSWORD: "demo"
+        run: dotnet test ProtobufTransit.sln -c Release --no-build --verbosity normal
+
+      - name: Pack
+        run: dotnet pack src/ProtobufTransit/ProtobufTransit.csproj -c Release --no-build -o artifacts
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/
+          if-no-files-found: error

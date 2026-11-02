@@ -1,0 +1,16 @@
+bin/
+obj/
+artifacts/
+TestResults/
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+__pycache__/
+*.py[cod]
+.venv/
+examples/python/sample_pb2.py

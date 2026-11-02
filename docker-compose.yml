@@ -1,0 +1,43 @@
+name: protobuf-transit
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pbtransit-postgres
+    environment:
+      POSTGRES_DB: pbtransit_demo
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+    ports:
+      - "127.0.0.1:55439:5432"
+    volumes:
+      - pbtransit_demo_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d pbtransit_demo"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: pbtransit-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: demo
+      RABBITMQ_DEFAULT_PASS: demo
+    ports:
+      - "127.0.0.1:56789:5672"
+      - "127.0.0.1:65439:15672"
+    volumes:
+      - pbtransit_demo_rmqdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  pbtransit_demo_pgdata:
+  pbtransit_demo_rmqdata:
