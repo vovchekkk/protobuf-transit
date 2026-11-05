@@ -18,7 +18,7 @@ Registered protobuf messages transmit over the wire as raw protobuf binary bytes
 Install via NuGet:
 
 ```shell
-dotnet add package ProtobufTransit
+dotnet add package ProtobufTransit --version 0.1.0-alpha.2
 ```
 
 To build and consume the package directly from local artifacts without modifying global NuGet configuration:
