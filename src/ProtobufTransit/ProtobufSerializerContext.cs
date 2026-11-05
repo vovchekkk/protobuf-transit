@@ -114,64 +114,17 @@ internal sealed class ProtobufSerializerContext : SerializerContext
 
     public T? DeserializeObject<T>(object? value, T? defaultValue = default) where T : class
     {
-        if (value is null)
-        {
-            return defaultValue;
-        }
-
-        if (value is T typed)
-        {
-            return typed;
-        }
-
-        try
-        {
-            var json = value is string str ? str : JsonSerializer.Serialize(value);
-            return JsonSerializer.Deserialize<T>(json) ?? defaultValue;
-        }
-        catch
-        {
-            return defaultValue;
-        }
+        return SystemTextJsonMessageSerializer.Instance.DeserializeObject(value, defaultValue);
     }
 
     public T? DeserializeObject<T>(object? value, T? defaultValue = default) where T : struct
     {
-        if (value is null)
-        {
-            return defaultValue;
-        }
-
-        if (value is T typed)
-        {
-            return typed;
-        }
-
-        try
-        {
-            var json = value is string str ? str : JsonSerializer.Serialize(value);
-            return JsonSerializer.Deserialize<T>(json);
-        }
-        catch
-        {
-            return defaultValue;
-        }
+        return SystemTextJsonMessageSerializer.Instance.DeserializeObject(value, defaultValue);
     }
 
     public MessageBody SerializeObject(object? value)
     {
-        if (value == null)
-        {
-            return new StringMessageBody(string.Empty);
-        }
-
-        if (value is string s)
-        {
-            return new StringMessageBody(s);
-        }
-
-        var json = JsonSerializer.Serialize(value);
-        return new StringMessageBody(json);
+        return SystemTextJsonMessageSerializer.Instance.SerializeObject(value);
     }
 
     private static Guid? TryGetGuid(Headers headers, params string[] headerNames)

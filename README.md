@@ -4,7 +4,7 @@ Contract-agnostic Google.Protobuf binary serialization and Base64 transactional 
 
 ## Status & Compatibility
 
-- **Status**: Alpha (`0.1.0-alpha.1`)
+- **Status**: Alpha (`0.1.0-alpha.2`)
 - **Runtime**: .NET 8 (`net8.0`)
 - **MassTransit**: Tested on `8.3.6`. Dependency constraint is `[8.3.6, 9.0.0)`. MassTransit 9.x is unverified.
 - **Google.Protobuf**: Tested on `3.26.1`.
@@ -15,17 +15,17 @@ Registered protobuf messages transmit over the wire as raw protobuf binary bytes
 
 ## Installation
 
-ProtobufTransit is not yet published to the public NuGet.org gallery. To build and consume the package directly from artifacts without modifying global NuGet configuration:
+Install via NuGet:
+
+```shell
+dotnet add package ProtobufTransit
+```
+
+To build and consume the package directly from local artifacts without modifying global NuGet configuration:
 
 ```shell
 dotnet pack src/ProtobufTransit/ProtobufTransit.csproj -c Release -o ./artifacts
-dotnet add <path-to-your-project>/<project>.csproj package ProtobufTransit --version 0.1.0-alpha.1 --source <absolute-path-to-protobuf-transit>/artifacts
-```
-
-After future public registration, installation will use:
-
-```shell
-dotnet add package ProtobufTransit --version 0.1.0-alpha.1
+dotnet add <path-to-your-project>/<project>.csproj package ProtobufTransit --version 0.1.0-alpha.2 --source <absolute-path-to-protobuf-transit>/artifacts
 ```
 
 ---

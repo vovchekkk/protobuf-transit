@@ -135,4 +135,64 @@ public class ProtobufOutboxBase64Tests
         Assert.That(read, Is.EqualTo(5));
         Assert.That(buffer, Is.EqualTo(bytes));
     }
+
+    [Test]
+    public void SerializerContext_DictionaryRoundtrip_ReconstructsHeadersAndDeserializesProtobufMessage()
+    {
+        var sampleMessage = new SampleTextMessage
+        {
+            Text = "Roundtrip Header Test",
+            Count = 42
+        };
+        sampleMessage.Tags.Add("header-test");
+
+        var rawBytes = sampleMessage.ToByteArray();
+        var body = new ProtobufMessageBody(rawBytes);
+
+        var messageId = Guid.NewGuid();
+
+        var sendContext = new MessageSendContext<SampleTextMessage>(sampleMessage);
+        sendContext.Headers.Set(ProtobufConstants.MessageTypeHeader, "urn:message:ProtobufTransit.Tests.Messages:SampleTextMessage");
+        sendContext.Headers.Set("GuidHeader", messageId);
+        sendContext.Headers.Set("BoolHeader", true);
+        sendContext.Headers.Set("IntHeader", 12345);
+        sendContext.Headers.Set("NestedHeader", new Dictionary<string, object> { { "Key", "Value" } });
+
+        var initialContext = _deserializer.Deserialize(body, sendContext.Headers);
+
+        var serializedHeaders = SerializerContextExtensions.SerializeDictionary(initialContext, sendContext.Headers.GetAll());
+        Assert.That(serializedHeaders, Is.Not.Null.And.Not.Empty);
+
+        var deserializedDictionary = SerializerContextExtensions.DeserializeDictionary<object>(initialContext, serializedHeaders);
+        Assert.That(deserializedDictionary, Is.Not.Null);
+
+        var outboxMessage = new MassTransit.EntityFrameworkCoreIntegration.OutboxMessage
+        {
+            Headers = serializedHeaders
+        };
+        outboxMessage.Deserialize(initialContext);
+
+        Headers reconstructedHeaders = ((MessageContext)outboxMessage).Headers;
+        Assert.That(deserializedDictionary.ContainsKey(ProtobufConstants.MessageTypeHeader), Is.True);
+        Assert.That(deserializedDictionary.ContainsKey("GuidHeader"), Is.True);
+        Assert.That(deserializedDictionary.ContainsKey("BoolHeader"), Is.True);
+        Assert.That(deserializedDictionary.ContainsKey("IntHeader"), Is.True);
+        Assert.That(deserializedDictionary.ContainsKey("NestedHeader"), Is.True);
+
+        Assert.That(reconstructedHeaders.Get<string>(ProtobufConstants.MessageTypeHeader), Is.EqualTo("urn:message:ProtobufTransit.Tests.Messages:SampleTextMessage"));
+        Assert.That(reconstructedHeaders.Get<Guid>("GuidHeader"), Is.EqualTo(messageId));
+        Assert.That(reconstructedHeaders.Get<bool>("BoolHeader"), Is.True);
+        Assert.That(reconstructedHeaders.Get<int>("IntHeader"), Is.EqualTo(12345));
+
+        Assert.That(reconstructedHeaders.TryGetHeader("NestedHeader", out var nestedVal), Is.True);
+        Assert.That(nestedVal, Is.Not.Null);
+
+        var restoredContext = _deserializer.Deserialize(body, reconstructedHeaders);
+        Assert.That(restoredContext.TryGetMessage<SampleTextMessage>(out var restoredMessage), Is.True);
+        Assert.That(restoredMessage, Is.Not.Null);
+        Assert.That(restoredMessage!.Text, Is.EqualTo("Roundtrip Header Test"));
+        Assert.That(restoredMessage.Count, Is.EqualTo(42));
+        Assert.That(restoredMessage.Tags.Count, Is.EqualTo(1));
+        Assert.That(restoredMessage.Tags[0], Is.EqualTo("header-test"));
+    }
 }
